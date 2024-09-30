@@ -7,7 +7,6 @@ import java.sql.Statement;
 import java.sql.SQLException;
 import java.sql.DriverManager;
 import java.util.concurrent.TimeUnit;
-import java.util.LinkedHashMap;
 import com.google.common.cache.CacheBuilder;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -17,81 +16,91 @@ import java.util.logging.FileHandler;
 import java.util.logging.SimpleFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.Supplier;
+import java.util.stream.IntStream;
+import java.util.concurrent.Future;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 
 public class AdvancedDatabaseCachingBenchmark {
-    // Database connection details
-    private static final String DB_URL = "jdbc:mysql://localhost:3306/testingdb";
+    // Database connection parameters
+    private static final String DB_URL = "jdbc:mysql://localhost:3306/testdb";
     private static final String DB_USER = "root";
     private static final String DB_PASSWORD = "root";
-
-    // Number of elements for benchmark
-    private static final int NUM_ELEMENTS = 100000;
     
-    // Cache sizes and parameters
-    private static final int L1_CACHE_SIZE = 10000;
-    private static final int L2_CACHE_SIZE = 100000;
-    private static final int L2_CACHE_DURATION_MINUTES = 10;
+    // Constants for benchmarking
+    private static final int NUM_ELEMENTS = 100000; // Total number of elements to insert/retrieve
+    private static final int L1_CACHE_SIZE = 10000; // Size of L1 cache
+    private static final int L2_CACHE_SIZE = 100000; // Size of L2 cache
+    private static final int L2_CACHE_DURATION_MINUTES = 10; // Duration for L2 cache expiration
+    private static final int NUM_THREADS = Runtime.getRuntime().availableProcessors(); // Number of available processors
+    private static final int BATCH_SIZE = 10000; // Batch size for database operations
 
-    // Progress log interval for batch operations
-    private static final int PROGRESS_INTERVAL = 10000;
-
-    // Connection to the database
-    private static Connection connection;
-
-    // L1 Cache (In-memory) with a fixed size (using LinkedHashMap for LRU mechanism)
-    private static Map<Integer, String> l1Cache;
-
-    // L2 Cache (using Guava Cache for larger capacity)
-    private static Cache<Integer, String> l2Cache;
-
-    // Logger for recording the benchmark progress and results
-    private static final Logger LOGGER = Logger.getLogger(AdvancedDatabaseCachingBenchmark.class.getName());
+    private static Connection connection; // Database connection
+    private static Map<Integer, String> l1Cache; // L1 cache implemented as a ConcurrentHashMap
+    private static Cache<Integer, String> l2Cache; // L2 cache using Guava Cache
+    private static final Logger LOGGER = Logger.getLogger(AdvancedDatabaseCachingBenchmark.class.getName()); // Logger for logging operations
+    private static final ExecutorService executorService = Executors.newFixedThreadPool(NUM_THREADS); // Thread pool for concurrent operations
 
     public static void main(String[] args) {
-        setupLogging();  // Initialize the logging setup
-
+        // Setup logging configuration
+        setupLogging();
         try {
-            setupDatabase();  // Set up the database connection and table
-            setupCaches();    // Initialize L1 and L2 caches
-
-            // List to hold benchmark results for each operation
+            // Initialize the database and caches
+            setupDatabase();
+            setupCaches();
+            
+            // List to hold benchmark results
             List<BenchmarkResult> results = new ArrayList<>();
+            results.add(new BenchmarkResult("Database Insert", benchmarkConcurrent(AdvancedDatabaseCachingBenchmark::databaseInsert)));
+            results.add(new BenchmarkResult("Database Retrieve", benchmarkConcurrent(AdvancedDatabaseCachingBenchmark::databaseRetrieve)));
+            results.add(new BenchmarkResult("L1 Cache Insert", benchmarkConcurrent(AdvancedDatabaseCachingBenchmark::l1CacheInsert)));
+            results.add(new BenchmarkResult("L1 Cache Retrieve", benchmarkConcurrent(AdvancedDatabaseCachingBenchmark::l1CacheRetrieve)));
+            results.add(new BenchmarkResult("L2 Cache Insert", benchmarkConcurrent(AdvancedDatabaseCachingBenchmark::l2CacheInsert)));
+            results.add(new BenchmarkResult("L2 Cache Retrieve", benchmarkConcurrent(AdvancedDatabaseCachingBenchmark::l2CacheRetrieve)));
+            results.add(new BenchmarkResult("Multilevel Cache Retrieve", benchmarkConcurrent(AdvancedDatabaseCachingBenchmark::multilevelCacheRetrieve)));
 
-            // Perform benchmark operations and store results
-            results.add(new BenchmarkResult("Database Insert", benchmarkDatabaseInsert()));
-            results.add(new BenchmarkResult("Database Retrieve", benchmarkDatabaseRetrieve()));
-            results.add(new BenchmarkResult("L1 Cache Insert", benchmarkL1CacheInsert()));
-            results.add(new BenchmarkResult("L1 Cache Retrieve", benchmarkL1CacheRetrieve()));
-            results.add(new BenchmarkResult("L2 Cache Insert", benchmarkL2CacheInsert()));
-            results.add(new BenchmarkResult("L2 Cache Retrieve", benchmarkL2CacheRetrieve()));
-            results.add(new BenchmarkResult("Multilevel Cache Retrieve", benchmarkMultilevelCacheRetrieve()));
-
-            // Analyze and log performance results
+            // Analyze and log the results
             analyzeAndLogResults(results);
+            prepareGraphData(results); // Prepare data for visualization
 
         } catch (Exception e) {
+            // Log any exceptions that occur during the execution
             LOGGER.log(Level.SEVERE, "An error occurred during benchmark execution", e);
         } finally {
-            closeDatabaseConnection();  // Ensure the database connection is closed
+            // Clean up resources
+            try {
+                if (connection != null) {
+                    connection.close(); // Close the database connection
+                }
+                executorService.shutdown(); // Shutdown the executor service
+            } catch (SQLException e) {
+                LOGGER.log(Level.SEVERE, "Error closing database connection", e);
+            }
         }
     }
 
-    // Set up logging configuration for the benchmark execution
+    // Method to set up logging to a file
     private static void setupLogging() {
         try {
-            FileHandler fileHandler = new FileHandler("benchmark_log.txt");
-            fileHandler.setFormatter(new SimpleFormatter());
-            LOGGER.addHandler(fileHandler);
+            FileHandler fileHandler = new FileHandler("concurrent_benchmark_log.txt");
+            SimpleFormatter formatter = new SimpleFormatter();
+            fileHandler.setFormatter(formatter);
+            LOGGER.addHandler(fileHandler); // Add file handler to the logger
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error setting up logging", e);
         }
     }
 
-    // Establish a connection to the database and set up the table for the benchmark
+    // Method to initialize the database
     private static void setupDatabase() {
         try {
-            connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+            connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD); // Establish database connection
             try (Statement statement = connection.createStatement()) {
+                // Create a test table if it doesn't exist
                 statement.executeUpdate("CREATE TABLE IF NOT EXISTS test_table (id INT PRIMARY KEY, value VARCHAR(255))");
             }
             LOGGER.info("Database setup completed successfully.");
@@ -100,208 +109,159 @@ public class AdvancedDatabaseCachingBenchmark {
         }
     }
 
-    // Initialize the L1 and L2 caches with size limits and expiration policies
+    // Method to initialize caches
     private static void setupCaches() {
-        l1Cache = new LinkedHashMap<Integer, String>(L1_CACHE_SIZE, 0.75f, true) {
-            @Override
-            protected boolean removeEldestEntry(Map.Entry<Integer, String> eldest) {
-                return size() > L1_CACHE_SIZE;
-            }
-        };
-
+        l1Cache = new ConcurrentHashMap<>(L1_CACHE_SIZE); // Initialize L1 cache
         l2Cache = CacheBuilder.newBuilder()
-                .maximumSize(L2_CACHE_SIZE)
-                .expireAfterAccess(L2_CACHE_DURATION_MINUTES, TimeUnit.MINUTES)
+                .maximumSize(L2_CACHE_SIZE) // Set maximum size for L2 cache
+                .expireAfterAccess(L2_CACHE_DURATION_MINUTES, TimeUnit.MINUTES) // Set expiration for L2 cache
                 .build();
-
         LOGGER.info("Caches setup completed successfully.");
     }
 
-    // Benchmark for inserting data into the database in batches for better performance
-    private static long benchmarkDatabaseInsert() throws SQLException {
-        LOGGER.info("Starting Database Insert benchmark...");
-        long startTime = System.nanoTime();
-
-        String sql = "INSERT INTO test_table (id, value) VALUES (?, ?)";
-        try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            for (int i = 0; i < NUM_ELEMENTS; i++) {
-                statement.setInt(1, i);
-                statement.setString(2, "Value" + i);
-                statement.addBatch();
-
-                // Execute batch every 100 operations to optimize performance
-                if (i % 100 == 0) {
-                    statement.executeBatch();
-                }
-                logProgress("Database Insert", i);
-            }
-            statement.executeBatch();  // Execute remaining batches
+    // Method to benchmark a concurrent operation
+    private static long benchmarkConcurrent(Supplier<Void> operation) throws InterruptedException, ExecutionException {
+        long startTime = System.nanoTime(); // Start timing
+        List<Future<Void>> futures = new ArrayList<>(); // List to hold futures for each thread
+        
+        // Submit tasks for each thread
+        for (int i = 0; i < NUM_THREADS; i++) {
+            int startIndex = i * (NUM_ELEMENTS / NUM_THREADS);
+            int endIndex = (i + 1) * (NUM_ELEMENTS / NUM_THREADS);
+            futures.add(executorService.submit(() -> {
+                IntStream.range(startIndex, endIndex).forEach(j -> operation.get()); // Perform the operation
+                return null; // Return null after execution
+            }));
         }
-
-        long endTime = System.nanoTime();
-        LOGGER.info("Database Insert benchmark completed.");
-        return endTime - startTime;
+        
+        // Wait for all tasks to complete
+        for (Future<Void> future : futures) {
+            future.get();
+        }
+        
+        long endTime = System.nanoTime(); // End timing
+        return endTime - startTime; // Return elapsed time
     }
 
-    // Benchmark for retrieving data from the database using a SELECT query
-    private static long benchmarkDatabaseRetrieve() throws SQLException {
-        LOGGER.info("Starting Database Retrieve benchmark...");
-        long startTime = System.nanoTime();
-
-        String sql = "SELECT value FROM test_table WHERE id = ?";
-        try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            for (int i = 0; i < NUM_ELEMENTS; i++) {
-                statement.setInt(1, i);
-                try (ResultSet resultSet = statement.executeQuery()) {
-                    if (resultSet.next()) {
-                        resultSet.getString("value");  // Simulate data retrieval
-                    }
-                }
-                logProgress("Database Retrieve", i);
-            }
+    // Method to perform database insert operation
+    private static Void databaseInsert() {
+        try (PreparedStatement statement = connection.prepareStatement("INSERT INTO test_table (id, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)")) {
+            int id = ThreadLocalRandom.current().nextInt(NUM_ELEMENTS); // Generate a random id
+            statement.setInt(1, id); // Set id in statement
+            statement.setString(2, "Value" + id); // Set value in statement
+            statement.executeUpdate(); // Execute the update
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Error in database insert", e); // Log error if occurs
         }
-
-        long endTime = System.nanoTime();
-        LOGGER.info("Database Retrieve benchmark completed.");
-        return endTime - startTime;
+        return null; // Return null
     }
 
-    // Benchmark for inserting data into the L1 Cache (using LinkedHashMap)
-    private static long benchmarkL1CacheInsert() {
-        LOGGER.info("Starting L1 Cache Insert benchmark...");
-        long startTime = System.nanoTime();
-
-        for (int i = 0; i < NUM_ELEMENTS; i++) {
-            l1Cache.put(i, "Value" + i);  // Insert data into L1 Cache
-            logProgress("L1 Cache Insert", i);
-        }
-
-        long endTime = System.nanoTime();
-        LOGGER.info("L1 Cache Insert benchmark completed.");
-        return endTime - startTime;
-    }
-
-    // Benchmark for retrieving data from the L1 Cache
-    private static long benchmarkL1CacheRetrieve() {
-        LOGGER.info("Starting L1 Cache Retrieve benchmark...");
-        long startTime = System.nanoTime();
-
-        for (int i = 0; i < NUM_ELEMENTS; i++) {
-            l1Cache.get(i);  // Retrieve data from L1 Cache
-            logProgress("L1 Cache Retrieve", i);
-        }
-
-        long endTime = System.nanoTime();
-        LOGGER.info("L1 Cache Retrieve benchmark completed.");
-        return endTime - startTime;
-    }
-
-    // Benchmark for inserting data into the L2 Cache (using Guava Cache)
-    private static long benchmarkL2CacheInsert() {
-        LOGGER.info("Starting L2 Cache Insert benchmark...");
-        long startTime = System.nanoTime();
-
-        for (int i = 0; i < NUM_ELEMENTS; i++) {
-            l2Cache.put(i, "Value" + i);  // Insert data into L2 Cache
-            logProgress("L2 Cache Insert", i);
-        }
-
-        long endTime = System.nanoTime();
-        LOGGER.info("L2 Cache Insert benchmark completed.");
-        return endTime - startTime;
-    }
-
-    // Benchmark for retrieving data from the L2 Cache
-    private static long benchmarkL2CacheRetrieve() {
-        LOGGER.info("Starting L2 Cache Retrieve benchmark...");
-        long startTime = System.nanoTime();
-
-        for (int i = 0; i < NUM_ELEMENTS; i++) {
-            l2Cache.getIfPresent(i);  // Retrieve data from L2 Cache
-            logProgress("L2 Cache Retrieve", i);
-        }
-
-        long endTime = System.nanoTime();
-        LOGGER.info("L2 Cache Retrieve benchmark completed.");
-        return endTime - startTime;
-    }
-
-    // Benchmark for retrieving data from both L1 and L2 caches, and fallback to database
-    private static long benchmarkMultilevelCacheRetrieve() throws SQLException {
-        LOGGER.info("Starting Multilevel Cache Retrieve benchmark...");
-        long startTime = System.nanoTime();
-
-        for (int i = 0; i < NUM_ELEMENTS; i++) {
-            // Attempt to retrieve from L1 cache
-            String value = l1Cache.get(i);
-
-            // Fallback to L2 cache if not in L1
-            if (value == null) {
-                value = l2Cache.getIfPresent(i);
-
-                // Fallback to database if not in L2
-                if (value == null) {
-                    String sql = "SELECT value FROM test_table WHERE id = ?";
-                    try (PreparedStatement statement = connection.prepareStatement(sql)) {
-                        statement.setInt(1, i);
-                        try (ResultSet resultSet = statement.executeQuery()) {
-                            if (resultSet.next()) {
-                                value = resultSet.getString("value");
-                            }
-                        }
-                    }
+    // Method to perform database retrieve operation
+    private static Void databaseRetrieve() {
+        try (PreparedStatement statement = connection.prepareStatement("SELECT value FROM test_table WHERE id = ?")) {
+            int id = ThreadLocalRandom.current().nextInt(NUM_ELEMENTS); // Generate a random id
+            statement.setInt(1, id); // Set id in statement
+            try (ResultSet resultSet = statement.executeQuery()) { // Execute query
+                if (resultSet.next()) {
+                    resultSet.getString("value"); // Get value from result set
                 }
             }
-            logProgress("Multilevel Cache Retrieve", i);
+        } catch (SQLException e) {
+            LOGGER.log(Level.SEVERE, "Error in database retrieve", e); // Log error if occurs
         }
-
-        long endTime = System.nanoTime();
-        LOGGER.info("Multilevel Cache Retrieve benchmark completed.");
-        return endTime - startTime;
+        return null; // Return null
     }
 
-    // Log progress at intervals to track the benchmark operation progress
-    private static void logProgress(String operation, int i) {
-        if (i % PROGRESS_INTERVAL == 0) {
-            LOGGER.info(operation + " progress: " + i + "/" + NUM_ELEMENTS);
-        }
+    // Method to perform L1 cache insert operation
+    private static Void l1CacheInsert() {
+        int id = ThreadLocalRandom.current().nextInt(NUM_ELEMENTS); // Generate a random id
+        l1Cache.put(id, "Value" + id); // Insert value into L1 cache
+        return null; // Return null
     }
 
-    // Analyze the benchmark results and log the performance timings
+    // Method to perform L1 cache retrieve operation
+    private static Void l1CacheRetrieve() {
+        int id = ThreadLocalRandom.current().nextInt(NUM_ELEMENTS); // Generate a random id
+        l1Cache.get(id); // Retrieve value from L1 cache
+        return null; // Return null
+    }
+
+    // Method to perform L2 cache insert operation
+    private static Void l2CacheInsert() {
+        int id = ThreadLocalRandom.current().nextInt(NUM_ELEMENTS); // Generate a random id
+        l2Cache.put(id, "Value" + id); // Insert value into L2 cache
+        return null; // Return null
+    }
+
+    // Method to perform L2 cache retrieve operation
+    private static Void l2CacheRetrieve() {
+        int id = ThreadLocalRandom.current().nextInt(NUM_ELEMENTS); // Generate a random id
+        l2Cache.getIfPresent(id); // Retrieve value from L2 cache
+        return null; // Return null
+    }
+
+    // Method to perform multilevel cache retrieve operation
+    private static Void multilevelCacheRetrieve() {
+        int id = ThreadLocalRandom.current().nextInt(NUM_ELEMENTS); // Generate a random id
+        String value = l1Cache.get(id); // Attempt to retrieve from L1 cache
+        if (value == null) { // If not found in L1 cache
+            value = l2Cache.getIfPresent(id); // Attempt to retrieve from L2 cache
+            if (value != null) {
+                l1Cache.put(id, value); // Update L1 cache with value from L2
+            }
+        }
+        return null; // Return null
+    }
+
+    // Method to analyze and log the benchmark results
     private static void analyzeAndLogResults(List<BenchmarkResult> results) {
-        LOGGER.info("Benchmark Results:");
-        for (BenchmarkResult result : results) {
-            LOGGER.info(result.getOperation() + ": " + (result.getDuration() / 1_000_000) + " ms");
-        }
+        // Log each benchmark result
+        results.forEach(result -> logBenchmark(result.operation, result.time));
+        
+        // Compare L1 and L2 cache retrieval times to database retrieval time
+        long dbRetrieveTime = results.stream().filter(r -> r.operation.equals("Database Retrieve")).findFirst().get().time;
+        long l1RetrieveTime = results.stream().filter(r -> r.operation.equals("L1 Cache Retrieve")).findFirst().get().time;
+        logImprovement("L1 Cache vs Database", dbRetrieveTime, l1RetrieveTime);
+        
+        long l2RetrieveTime = results.stream().filter(r -> r.operation.equals("L2 Cache Retrieve")).findFirst().get().time;
+        logImprovement("L2 Cache vs Database", dbRetrieveTime, l2RetrieveTime);
+        
+        // Identify bottlenecks in the operations
+        identifyBottlenecks(results);
     }
 
-    // Close the database connection after completing the benchmark
-    private static void closeDatabaseConnection() {
-        if (connection != null) {
-            try {
-                connection.close();
-            } catch (SQLException e) {
-                LOGGER.log(Level.SEVERE, "Error closing database connection", e);
-            }
-        }
+    // Method to log benchmark results
+    private static void logBenchmark(String operation, long time) {
+        LOGGER.info(String.format("%s: %.3f ms", operation, time / 1_000_000.0)); // Log the operation time in milliseconds
     }
 
-    // Helper class to store benchmark operation results
-    static class BenchmarkResult {
-        private String operation;
-        private long duration;
+    // Method to log improvement percentage between operations
+    private static void logImprovement(String comparison, long dbRetrieveTime, long operationTime) {
+        double improvementPercentage = ((dbRetrieveTime - operationTime) / (double) dbRetrieveTime) * 100; // Calculate improvement percentage
+        LOGGER.info(String.format("%s: %.2f%% improvement", comparison, improvementPercentage)); // Log improvement
+    }
 
-        public BenchmarkResult(String operation, long duration) {
-            this.operation = operation;
-            this.duration = duration;
-        }
+    // Method to identify bottlenecks in the benchmark results
+    private static void identifyBottlenecks(List<BenchmarkResult> results) {
+        // Filter results to find operations that exceed the average execution time
+        results.stream()
+               .filter(r -> r.time > results.stream().mapToLong(res -> res.time).average().orElse(0))
+               .forEach(r -> LOGGER.warning(String.format("Bottleneck detected in %s", r.operation))); // Log bottleneck operations
+    }
 
-        public String getOperation() {
-            return operation;
-        }
+    // Method to prepare graph data for visualization (implementation details to be filled in)
+    private static void prepareGraphData(List<BenchmarkResult> results) {
+        // Implement logic for preparing graph data based on benchmark results
+    }
 
-        public long getDuration() {
-            return duration;
+    // Inner class to hold benchmark results
+    private static class BenchmarkResult {
+        String operation; // Name of the operation
+        long time; // Time taken for the operation
+
+        BenchmarkResult(String operation, long time) {
+            this.operation = operation; // Set operation name
+            this.time = time; // Set operation time
         }
     }
 }
