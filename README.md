@@ -131,6 +131,8 @@ To improve performance, the project uses **batch inserts** in the database durin
 ## Results and Analysis
 
 After running the benchmarks, the log file (`benchmark_log.txt`) will contain the timings for each operation in nanoseconds. The `analyzeAndLogResults` method provides a summary of the benchmark results, which can be used for performance analysis.
+![WhatsApp Image 2024-09-30 at 11 41 42_b44174ba](https://github.com/user-attachments/assets/bf11571a-0aa5-40bc-9d7a-0b70c780ddeb)
+
 
 ### Example Output:
 ```
