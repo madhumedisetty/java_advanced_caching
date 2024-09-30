@@ -68,7 +68,6 @@ public class AdvancedDatabaseCachingBenchmark {
 
             // Analyze and log performance results
             analyzeAndLogResults(results);
-            prepareGraphData(results);  // Prepare data for graphing
 
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "An error occurred during benchmark execution", e);
@@ -304,11 +303,5 @@ public class AdvancedDatabaseCachingBenchmark {
         public long getDuration() {
             return duration;
         }
-    }
-
-    // Prepare the benchmark results for graphing (this method can be further expanded)
-    private static void prepareGraphData(List<BenchmarkResult> results) {
-        // Placeholder for graphing logic; can be implemented using graph libraries.
-        LOGGER.info("Graph data preparation (to be implemented)");
     }
 }
