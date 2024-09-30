@@ -3,6 +3,7 @@
 ## Overview
 
 This repository contains a Java-based benchmarking project that tests the performance of different caching mechanisms in the context of database operations. The system demonstrates multilevel caching, including both **L1 in-memory caching** (using `LinkedHashMap` with LRU policy) and **L2 disk-backed caching** (using **Guava Cache**), as well as fallback to database access. The project is designed to compare the performance of direct database operations with cache-augmented approaches and aims to optimize retrieval speeds in large datasets.
+![WhatsApp Image 2024-09-30 at 11 27 11_4875625c](https://github.com/user-attachments/assets/ebfe9d33-9a01-45a5-a0f6-48d9182cd966)
 
 ## Features
 
