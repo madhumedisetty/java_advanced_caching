@@ -1,0 +1,14 @@
+Sept 30, 2024 11:34:31 AM com.example.AdvancedDatabaseCachingBenchmark setupDatabase
+INFO: Database setup completed successfully.
+Sept 30, 2024 11:34:31 AM com.example.AdvancedDatabaseCachingBenchmark setupCaches
+INFO: Caches setup completed successfully.
+Sept 30, 2024 11:34:31 AM com.example.AdvancedDatabaseCachingBenchmark benchmarkDatabaseInsert
+INFO: Starting Database Insert benchmark...
+Sept 30, 2024 11:34:31 AM com.example.AdvancedDatabaseCachingBenchmark logProgress
+INFO: Database Insert progress: 0/100000
+Sept 30, 2024 11:34:52 AM com.example.AdvancedDatabaseCachingBenchmark logProgress
+INFO: Database Insert progress: 10000/100000
+Sept 30, 2024 11:35:15 AM com.example.AdvancedDatabaseCachingBenchmark logProgress
+INFO: Database Insert progress: 20000/100000
+Sept 30, 2024 11:36:13 AM com.example.AdvancedDatabaseCachingBenchmark logProgress
+INFO: Database Insert progress: 30000/100000
